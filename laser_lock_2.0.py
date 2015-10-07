@@ -1,5 +1,6 @@
 ### Python GUI program for laser locking system
 ### Built April 2015 by T.J. Procter
+### Latest edit Oct 2015
 ### Basic build of gui made with help from http://sebsauvage.net/python/gui/
 ### Help for the streaming class obtained from tutorials on plot.ly ###
 
