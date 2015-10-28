@@ -1,8 +1,9 @@
 ### Python GUI program for laser locking system
 ### Built April 2015 by T.J. Procter
-### Latest edit Oct 2015
 ### Basic build of gui made with help from http://sebsauvage.net/python/gui/
 ### Help for the streaming class obtained from tutorials on plot.ly ###
+
+### Update 2.2 July 14th 2015, adding Agilent monitor support
 
 ### When building with pyinstaller use: pyinstaller "~project.py" --hidden-import=scipy.special._ufuncs_cxx
 
@@ -21,7 +22,7 @@ import plotly.plotly as py
 import plotly.tools as tls    
 from plotly.graph_objs import *
 
-global operations, important, xaxis, waveform
+global operations, important, useful, xaxis, waveform, graph_axes
 operations = {}                         # Boolean dictionary of the status of operations
 operations["go"] = False
 operations["connected"] = False
@@ -29,27 +30,47 @@ operations["grabbing"] = False
 operations["wave_connected"] = False
 operations["streaming"] = False
 operations["logging"] = False
+operations["displayed"] = False
+operations["agilent_grab"] = False
 
 important = {}                          # Dictionary of important variables for program
-important["tisadiff"] = 10.0            # Arbitrary starting values
-important["henewidth"] = 600.0
-important["henecent"] = 600.0
-important["vout"] = 0.0
-important["offset"] = 0.5
-important["wavenumber"] = 0.0
-important["view_length"] = 500          # Initial monitoring array length
-important["errstate"] = 1               # Start in error state
+important["Lock Difference"] = 10.0            # Arbitrary starting values
+important["Laser Location"] = 0.0
+important["HeNe Left Location"] = 0.0
+important["HeNe Right Location"] = 0.0
+important["HeNe Width"] = 600.0
+important["HeNe Center"] = 600.0
+important["V Out"] = 0.0
+important["Ramp Offset"] = 0.5
+important["Wavenumber"] = 0.0
+important["Agilent_1"] = 0.0
+important["Agilent_2"] = 0.0
+important["Error State"] = 1               # Start in error state
 important["Kp"] = 0.0                   # Declare and set feedback constants
-important["Kpset"] = 0.5
 important["Ki"] = 0.0
-important["Kiset"] = 0.0
-important["rampKp"] = 0.01
-important["background"] = -0.12         # Initial locking parameters
-important["fitwidth"] = 100
-important["lockpos"] = 0.0
+important["Ramp Kp"] = 0.01
+
+global monitor, mon_options
+mon_options = []
+for key in important:
+    mon_options.append(key)
+mon_options = sorted(mon_options)
+monitor = mon_options[0]                 # Initial monitoring value
+
+useful = {}                             # Dictionary of useful variables
+useful["invert"] = 1
+useful["background"] = -0.12         # Initial locking parameters
+useful["fitwidth"] = 60
+useful["lockpos"] = 0.0
+useful["view_length"] = 500          # Initial monitoring array length
+useful["Kpset"] = 0.5
+useful["Kiset"] = 0.0
+useful["LockRate"] = 2
 
 xaxis = [1,2,3,4,5]                     # Arbitraty starting trace
 waveform = [1,1,1,1,1]
+
+graph_axes = [int(0),int(1200),float(-0.8),float(0.0)]            # Graph Properties [xmin, xmax, ymin,ymax]
 
 # Create Starting points for fitting peaks: [fwhm, intensity, peak location]
 global ptisa0, phenel0, phener0
@@ -58,24 +79,31 @@ phenel0 = np.array([5,0.5,200])
 phener0 = np.array([5,0.5,1000])
 
 # Create lists for monitoring information: [Y axis label, List of values, important value to monitor]
-global mon_info, wm_mon_info, monitor, monitor_xaxis
-mon_info, wm_mon_info = {},{}
-mon_info["Lock Difference"] = ['Difference (Channel #)',[],"tisadiff"]
-mon_info["HeNe Width"] = ['Width (Channel #)',[],"henewidth"]
-mon_info["HeNe Center"] = ['HeNe Center (Channel #)',[],"henecent"]
-mon_info["V Out"] = ['Voltage',[],"vout"]
-mon_info["Ramp Offset"] = ['Voltage',[],"offset"]
-mon_info["Error State"] = ['Error (1/0)',[],"errstate"]
-mon_info["Kp"] = ['Kp (arb.)',[],"Kp"]
-mon_info["Ki"] = ['Ki (arb.)',[],"Ki"]
-wm_mon_info["Wavenumber"] = ['Wavenumber (cm-1)',[],"wavenumber"]
+global mon_info, wm_mon_info, agilent_mon_info, monitor_xaxis
+mon_info, wm_mon_info, agilent_mon_info = {},{},{}
+mon_info["Laser Location"] = ["Laser Location (Channel #)",[],"Laser Location"]
+mon_info["HeNe Left Location"] = ["Left HeNe Location (Channel #)",[],"HeNe Left Location"]
+mon_info["HeNe Right Location"] = ["Right HeNe Location (Channel #)",[],"HeNe Right Location"]
+mon_info["Lock Difference"] = ["Difference (Channel #)",[],"Lock Difference"]
+mon_info["HeNe Width"] = ["Width (Channel #)",[],"HeNe Width"]
+mon_info["HeNe Center"] = ["HeNe Center (Channel #)",[],"HeNe Center"]
+mon_info["V Out"] = ["Voltage",[],"V Out"]
+mon_info["Ramp Offset"] = ["Voltage",[],"Ramp Offset"]
+mon_info["Error State"] = ["Error (1/0)",[],"Error State"]
+mon_info["Kp"] = ["Kp (arb.)",[],"Kp"]
+mon_info["Ki"] = ["Ki (arb.)",[],"Ki"]
+mon_info["Ramp Kp"] = ["Ramp Kp (arb.)",[],"Ramp Kp"]
 
-monitor = "Lock Difference"                 # Initial monitoring value
+wm_mon_info["Wavenumber"] = ["Wavenumber (cm-1)",[],"Wavenumber"]
+
+agilent_mon_info["Agilent_1"] = ["Reading",[],"Agilent_1"]
+agilent_mon_info["Agilent_2"] = ["Reading",[],"Agilent_2"]
+
 mon_length = 1000                           # Total num of values to save
 monitor_xaxis = list(xrange(mon_length))    # xAxis list for plotting
 
 def lorentzian(x,p):                        # Global function that creates lorentzian in range (x) using parameters (p)
-    return important["background"] + (-abs(p[1])) * (((p[0]**2)/4.0)/(((x-p[2])**2)+(p[0]**2/4.0)))
+    return useful["background"] + (-abs(p[1])) * (((p[0]**2)/4.0)/(((x-p[2])**2)+(p[0]**2/4.0)))
 
 class grabbing_thread(threading.Thread):    # Creating threading class for grabbing scope data
     def __init__(self):
@@ -87,21 +115,21 @@ class grabbing_thread(threading.Thread):    # Creating threading class for grabb
             xaxis, waveform = self.grabdata()                   # Grab waveform data whilst required
             time.sleep(0.05)                                    # After grab and sleep create traces for scope view
             mainline = wxplot.PolyLine(zip(xaxis,waveform),colour=wx.BLUE)
-            exline = wxplot.PolyLine([(0,important["background"]),(1200,important["background"])])
-            henelline = wxplot.PolyLine([(phenel0[2],-0.8),(phenel0[2],0.0)],colour=wx.RED)
-            henellower = wxplot.PolyLine([(phenel0[2]-important["fitwidth"],-0.8),(phenel0[2]-important["fitwidth"],0.0)],colour=wx.RED,style=wx.DOT)
-            henelupper = wxplot.PolyLine([(phenel0[2]+important["fitwidth"],-0.8),(phenel0[2]+important["fitwidth"],0.0)],colour=wx.RED,style=wx.DOT)
-            laserline = wxplot.PolyLine([(ptisa0[2],-0.8),(ptisa0[2],0.0)],colour='FOREST GREEN')
-            laserlower = wxplot.PolyLine([(ptisa0[2]-important["fitwidth"],-0.8),(ptisa0[2]-important["fitwidth"],0.0)],colour='FOREST GREEN',style=wx.DOT)
-            laserupper = wxplot.PolyLine([(ptisa0[2]+important["fitwidth"],-0.8),(ptisa0[2]+important["fitwidth"],0.0)],colour='FOREST GREEN',style=wx.DOT)
-            henerline = wxplot.PolyLine([(phener0[2],-0.8),(phener0[2],0.0)],colour=wx.RED)
-            henerlower = wxplot.PolyLine([(phener0[2]-important["fitwidth"],-0.8),(phener0[2]-important["fitwidth"],0.0)],colour=wx.RED,style=wx.DOT)
-            henerupper = wxplot.PolyLine([(phener0[2]+important["fitwidth"],-0.8),(phener0[2]+important["fitwidth"],0.0)],colour=wx.RED,style=wx.DOT)
-            setline = wxplot.PolyLine([(important['henecent']+(important["lockpos"]*important['henewidth']/2),-0.8),(important['henecent']+(important["lockpos"]*important['henewidth']/2),-0.0)],colour=wx.BLACK,style=wx.DOT)
+            exline = wxplot.PolyLine([(graph_axes[0],useful["background"]),(graph_axes[1],useful["background"])])
+            henelline = wxplot.PolyLine([(phenel0[2],graph_axes[2]),(phenel0[2],graph_axes[3])],colour=wx.RED)
+            henellower = wxplot.PolyLine([(phenel0[2]-useful["fitwidth"],graph_axes[2]),(phenel0[2]-useful["fitwidth"],graph_axes[3])],colour=wx.RED,style=wx.DOT)
+            henelupper = wxplot.PolyLine([(phenel0[2]+useful["fitwidth"],graph_axes[2]),(phenel0[2]+useful["fitwidth"],graph_axes[3])],colour=wx.RED,style=wx.DOT)
+            laserline = wxplot.PolyLine([(ptisa0[2],graph_axes[2]),(ptisa0[2],graph_axes[3])],colour='FOREST GREEN')
+            laserlower = wxplot.PolyLine([(ptisa0[2]-useful["fitwidth"],graph_axes[2]),(ptisa0[2]-useful["fitwidth"],graph_axes[3])],colour='FOREST GREEN',style=wx.DOT)
+            laserupper = wxplot.PolyLine([(ptisa0[2]+useful["fitwidth"],graph_axes[2]),(ptisa0[2]+useful["fitwidth"],graph_axes[3])],colour='FOREST GREEN',style=wx.DOT)
+            henerline = wxplot.PolyLine([(phener0[2],graph_axes[2]),(phener0[2],graph_axes[3])],colour=wx.RED)
+            henerlower = wxplot.PolyLine([(phener0[2]-useful["fitwidth"],graph_axes[2]),(phener0[2]-useful["fitwidth"],graph_axes[3])],colour=wx.RED,style=wx.DOT)
+            henerupper = wxplot.PolyLine([(phener0[2]+useful["fitwidth"],graph_axes[2]),(phener0[2]+useful["fitwidth"],graph_axes[3])],colour=wx.RED,style=wx.DOT)
+            setline = wxplot.PolyLine([(important["HeNe Center"]+(useful["lockpos"]*important["HeNe Width"]/2),graph_axes[2]),(important["HeNe Center"]+(useful["lockpos"]*important["HeNe Width"]/2),graph_axes[3])],colour=wx.BLACK,style=wx.DOT)
             gc = wxplot.PlotGraphics([mainline,exline,henelline,henellower,henelupper,
                                       laserline,laserlower,laserupper,
                                       henerline,henerlower,henerupper,setline],"Scope","Channel","Voltage")
-            canvas.Draw(gc,xAxis=(0,1200),yAxis=(-0.8,0))       # Update the graph
+            canvas.Draw(gc,xAxis=(graph_axes[0],graph_axes[1]),yAxis=(graph_axes[2],graph_axes[3]))       # Update the graph
         print "Stopped grabbing scope data"
         
     def grabdata(self):                                         # Function to grab information from the scope
@@ -114,7 +142,7 @@ class grabbing_thread(threading.Thread):    # Creating threading class for grabb
                 waveform = np.array(waveform)                   # Make data suitable for use in program
                 waveform = waveform.astype(np.float)
                 x = [i for i in xrange(len(waveform))]          # Create x axis of values for length of waveform
-                return x, waveform                              # Return x axis and waveform
+                return x, waveform * useful["invert"]                         # Return x axis and waveform
             except Exception,e:
                 print str(e)
                 print "Error importing values, will try again"
@@ -123,13 +151,13 @@ class lock_thread(threading.Thread):        # Create Threading Class for locking
     def __init__(self):
         threading.Thread.__init__(self)
     def run(self):
-        global important, operations, phenel0, ptisa0, phener0
+        global important, operations, useful, phenel0, ptisa0, phener0
         while True:
             try:
                 self.timescale = float(rigol.query("TIM:MAIN:SCAL?"))                           # Find the time scale
                 self.chan1scale = float(rigol.query(":CHAN1:SCAL?"))                            # Find the voltage scale
-                important["offset"] = round(float(rigol.query("SOURCE1:VOLTAGE:OFFSET?")),4)    # Find current offset
-                important["vout"] = round(float(rigol.query("SOURCE2:VOLTAGE:OFFSET?")),4)      # Find current vout
+                important["Ramp Offset"] = round(float(rigol.query("SOURCE1:VOLTAGE:OFFSET?")),4)    # Find current offset
+                important["V Out"] = round(float(rigol.query("SOURCE2:VOLTAGE:OFFSET?")),4)      # Find current vout
                 break
             except Exception,e:
                 print str(e)
@@ -139,17 +167,17 @@ class lock_thread(threading.Thread):        # Create Threading Class for locking
         ptisa0 = np.array([2500.*self.timescale,3.*self.chan1scale,float(laserentry.GetValue())])
         phenel0 = np.array([5000.*self.timescale,3.*self.chan1scale,float(henelentry.GetValue())])
         phener0 = np.array([5000.*self.timescale,3.*self.chan1scale,float(henerentry.GetValue())])
-        important["henecent"] = (phenel0[2]+phener0[2])/2                   # Calcualte center of hene peaks
+        important["HeNe Center"] = (phenel0[2]+phener0[2])/2                   # Calcualte center of hene peaks
                          
-        important["lockpos"] = float(setpoint.GetValue())                   # Set lock position 
+        useful["lockpos"] = float(setpoint.GetValue())                   # Set lock position 
         important["Kp"] = 0.0                                               # Set starting feedback constants
         important["Ki"] = 0.0
-        important["Kpset"] = float(feedback.GetValue())                     # Set the target feedback constants
-        important["Kiset"] = float(integral.GetValue())
-        important["rampKp"] = float(rampfeed.GetValue())                    # Set the feedback constant for the ramp offset
+        useful["Kpset"] = float(feedback.GetValue())                     # Set the target feedback constants
+        useful["Kiset"] = float(integral.GetValue())
+        important["Ramp Kp"] = float(rampfeed.GetValue())                    # Set the feedback constant for the ramp offset
 
-        self.offsetwrite = important["offset"]                              # Create var for writing offset
-        self.voutwrite = important["vout"]                                  # Create var for writing vout
+        self.offsetwrite = important["Ramp Offset"]                              # Create var for writing offset
+        self.voutwrite = important["V Out"]                                  # Create var for writing vout
         self.prevoffs = self.offsetwrite                                    # Set previous write values to know when change has occured
         self.prevvout = self.voutwrite
 
@@ -158,11 +186,14 @@ class lock_thread(threading.Thread):        # Create Threading Class for locking
         while operations["go"] == True:                                     # Main loop for locking routine
             while True:                                                     # Loop to fit the peaks
                 try:
-                    ptisa0,self.fitt = self.fitpeak(ptisa0,waveform,xaxis,important["fitwidth"])
-                    phenel0,self.fithl = self.fitpeak(phenel0,waveform,xaxis,important["fitwidth"])
-                    phener0,self.fithr = self.fitpeak(phener0,waveform,xaxis,important["fitwidth"])
-                    important["henecent"] = (phenel0[2]+phener0[2])/2       # Set new hene center
-                    important["henewidth"] = phener0[2] - phenel0[2]        # Set new hene width
+                    ptisa0,self.fitt = self.fitpeak(ptisa0,waveform,xaxis,useful["fitwidth"])
+                    phenel0,self.fithl = self.fitpeak(phenel0,waveform,xaxis,useful["fitwidth"])
+                    phener0,self.fithr = self.fitpeak(phener0,waveform,xaxis,useful["fitwidth"])
+                    important["HeNe Center"] = (phenel0[2]+phener0[2])/2       # Set new hene center
+                    important["HeNe Width"] = phener0[2] - phenel0[2]        # Set new hene width
+                    important["Laser Location"] = ptisa0[2]
+                    important["HeNe Left Location"] = phenel0[2]
+                    important["HeNe Right Location"] = phener0[2]
                     break
                 except Exception,e:
                     print str(e)    
@@ -171,10 +202,10 @@ class lock_thread(threading.Thread):        # Create Threading Class for locking
             # Check hene peaks have been correctly fitted
             if self.fithl == 'good' and self.fithr == 'good' and round(phenel0[2],1) != round(phener0[2],1):
                 self.middle = (xaxis[0] + xaxis[-1])/2                      # Find centre of x axis
-                self.centdiff = important["henecent"] - self.middle         # Find how far away hene peaks are from center
-                # Change offset value depending on distance from center of scope.  Normalised by henewidth                       
-                important["offset"] += important["rampKp"] * (self.centdiff/important["henewidth"])
-                self.offsetwrite = round(important["offset"],3)             # Round to 3 decimal places
+                self.centdiff = important["HeNe Center"] - self.middle         # Find how far away hene peaks are from center
+                # Change offset value depending on distance from center of scope.  Normalised by"HeNe Center"                      
+                important["Ramp Offset"] += important["Ramp Kp"] * (self.centdiff/important["HeNe Width"])
+                self.offsetwrite = round(important["Ramp Offset"],3)             # Round to 3 decimal places
                 if self.offsetwrite < (self.prevoffs) or self.offsetwrite > (self.prevoffs+0.002):    # Check value has changed
                     try:
                         rigol.write("SOURCE1:VOLTAGE:OFFSET "+str(self.offsetwrite))    # Write new ramp offset value
@@ -185,34 +216,34 @@ class lock_thread(threading.Thread):        # Create Threading Class for locking
                     except:
                         pass
 
-            if abs(important["Kp"]) < abs(important["Kpset"]):                                 
-                important["Kp"] += np.sign(important["Kpset"])*0.05                     # If not at set feedback value increment up
-            if abs(important["Kp"]) > abs(important["Kpset"]):
-                important["Kp"] = important["Kpset"]                                    # If above the set feedback value change to the set value
+            if abs(important["Kp"]) < abs(useful["Kpset"]):                                 
+                important["Kp"] += np.sign(useful["Kpset"])*0.05                     # If not at set feedback value increment up
+            if abs(important["Kp"]) > abs(useful["Kpset"]):
+                important["Kp"] = useful["Kpset"]                                    # If above the set feedback value change to the set value
 
-            if abs(important["Ki"]) < abs(important["Kiset"]):                                 
-                important["Ki"] += np.sign(important["Kiset"])*0.002                    # If not at set feedback value increment up
-            if abs(important["Ki"]) > abs(important["Kiset"]):
-                important["Ki"] = important["Kiset"]                                    # If above the set feedback value change to the set value
+            if abs(important["Ki"]) < abs(useful["Kiset"]):                                 
+                important["Ki"] += np.sign(useful["Kiset"])*0.002                    # If not at set feedback value increment up
+            if abs(important["Ki"]) > abs(useful["Kiset"]):
+                important["Ki"] = useful["Kiset"]                                    # If above the set feedback value change to the set value
                 
             if (self.fitt == 'good' and self.fithl == 'good' and   
                 self.fithr == 'good' and                                                # Check fits are good
                 round(phenel0[2],1) != round(ptisa0[2],1) and
                 round(phenel0[2],1) != round(phener0[2],1) and                          # Check to make sure two peaks haven't fit in the same place
                 round(ptisa0[2],1) != round(phener0[2],1)):
-                if important["errstate"] == 1:                                          # Update gui if previously had an error
+                if important["Error State"] == 1:                                          # Update gui if previously had an error
                     main_label.SetLabel("Back Running")
-                important["errstate"] = 0                                               # Set error to 0
+                important["Error State"] = 0                                               # Set error to 0
                 # Find laser lock difference from setpoint (relative to hene center)
-                important["tisadiff"] = ptisa0[2] - (important["lockpos"]*important["henewidth"]/2) - important["henecent"]
-                self.error = (important["tisadiff"]/important["henewidth"])             # Define error value. Normalise to hene width.
+                important["Lock Difference"] = ptisa0[2] - (useful["lockpos"]*important["HeNe Width"]/2) - important["HeNe Center"]
+                self.error = (important["Lock Difference"]/important["HeNe Width"])             # Define error value. Normalise to hene width.
                 self.errors.append(self.error)                                          # Add error to errors
                 self.errors.pop(0)                                                      # Remove old value
                  # Set vout depending on distance from set point.  (Proportional) + (Integral)
-                important["vout"] -= (important["Kp"] * self.error) + (important["Ki"] * (sum(self.errors)/len(self.errors)))        
-                if abs(important["vout"]) > 5.0:
-                    important["vout"] = np.sign(important["vout"])*5.0                  # Limit vout to +-5.0
-                self.voutwrite = round(important["vout"],3)                             # Round write voltage to 3 dp
+                important["V Out"] -= (important["Kp"] * self.error) + (important["Ki"] * (sum(self.errors)/len(self.errors)))        
+                if abs(important["V Out"]) > 5.0:
+                    important["V Out"] = np.sign(important["V Out"])*5.0                  # Limit vout to +-5.0
+                self.voutwrite = round(important["V Out"],3)                             # Round write voltage to 3 dp
                 if self.voutwrite != self.prevvout:
                     try:
                         rigol.write("SOURCE2:VOLTAGE:OFFSET "+str(self.voutwrite))      # If different write the new vout
@@ -221,7 +252,7 @@ class lock_thread(threading.Thread):        # Create Threading Class for locking
                     except:
                         pass
             else:                                               # If any of the above fails...
-                important["errstate"] = 1                       # Set error state as 1
+                important["Error State"] = 1                       # Set error state as 1
                 important["Kp"] = 0.0                           # Set feedback constant to 0
                 important["Ki"] = 0.0
                 time.sleep(0.5)                                 # Wait 0.5 seconds
@@ -235,14 +266,14 @@ class lock_thread(threading.Thread):        # Create Threading Class for locking
             self.fit_update(henelfit,self.fithl)                # Update laser fit state in GUI
             self.fit_update(henerfit,self.fithr)                # Update hene left fit state in GUI
             self.fit_update(laserfit,self.fitt)                 # Update hene right fit state in GUI
-            laser_diff.SetLabel(str(round(important["tisadiff"],3)))         # Update laser difference from lock position in GUI
+            laser_diff.SetLabel(str(round(important["Lock Difference"],3)))         # Update laser difference from lock position in GUI
             if (abs(important["Kp"]) == 0 or abs(important["Kp"]) == 0.0) and (abs(important["Ki"]) == 0 or abs(important["Ki"]) == 0.0):
                 second_label.SetLabel("Free Running")           # Update GUI as free running if Kpset = 0
                 second_label.SetBackgroundColour(wx.YELLOW)
-            elif abs(important["tisadiff"]) < 1.5:
+            elif abs(important["Lock Difference"]) < 1.5:
                 second_label.SetLabel("Locked")                 # If lock difference is below 1.5 update GUI as locked
                 second_label.SetBackgroundColour(wx.GREEN)
-            elif abs(important["tisadiff"]) < 2.5:
+            elif abs(important["Lock Difference"]) < 2.5:
                 second_label.SetLabel("Almost Locked")          # If lock difference is below 2.5 update GUI as almost locked
                 second_label.SetBackgroundColour(wx.YELLOW)
             else:
@@ -253,14 +284,14 @@ class lock_thread(threading.Thread):        # Create Threading Class for locking
                 mon_info[key][1].append(important[mon_info[key][2]])
                 if len(mon_info[key][1]) > mon_length:
                     mon_info[key][1].pop(0)
-            if monitor != "Wavenumber":                         # If not requesting wavenumber, update the monitor graph
+            if monitor != "Wavenumber" and monitor != "Agilent_1" and monitor != "Agilent_2":          # If not requesting wavenumber or agilent reading, update the monitor graph
                 monitor_data = mon_info[monitor][1]
-                monitor_plot = zip(monitor_xaxis[:important["view_length"]],monitor_data[-important["view_length"]:])
+                monitor_plot = zip(monitor_xaxis[:useful["view_length"]],monitor_data[-useful["view_length"]:])
                 monitor_line = wxplot.PolyLine(monitor_plot)
                 mon_gc = wxplot.PlotGraphics([monitor_line],"Monitor","Entry",mon_info[monitor][0])
-                mon_canvas.Draw(mon_gc,yAxis=(min(monitor_data[-important["view_length"]:])-0.0001,max(monitor_data[-important["view_length"]:])+0.0001))
+                mon_canvas.Draw(mon_gc,yAxis=(min(monitor_data[-useful["view_length"]:])-0.0001,max(monitor_data[-useful["view_length"]:])+0.0001))
             try:
-                time.sleep(0.5)                                 # Sleep time before starting loop again (i.e crude refresh rate)
+                time.sleep(useful["LockRate"])                                 # Sleep time before starting loop again (i.e crude refresh rate)
             except:
                 pass
 
@@ -280,7 +311,7 @@ class lock_thread(threading.Thread):        # Create Threading Class for locking
             lowbound = int(0)
         highbound = int(pstart[2])+fitwidth                     # Set higher boundary (this can go beyond scope range)
         fity = deepcopy(waveform[lowbound:highbound])           # Set data range within boundaries
-        fity[fity > important["background"]] = important["background"]    # Set values above background (exclusion level) to background
+        fity[fity > useful["background"]] = useful["background"]    # Set values above background (exclusion level) to background
         fitx = deepcopy(xaxis[lowbound:highbound])              # Set the x axis range for creating peak
         try:
             p0 = leastsq(self.residuals,pstart,args=(fity,fitx))# Least squares minimising routine to fit peak
@@ -301,6 +332,36 @@ class lock_thread(threading.Thread):        # Create Threading Class for locking
             pend0[2] = pstart[2]                                # Set the location back to where it started looking
         return pend0, fit                                       # Return fitted parameters and goodness of fit
 
+class agilent_thread(threading.Thread):                         # Creating thread for grabing agilent info
+    def __init__(self):
+        threading.Thread.__init__(self)
+    def run(self):
+        global important, operations, agilent
+        print "Starting grabbing info from agilent"
+
+        while operations["agilent_grab"] == True:
+            time.sleep(1)
+            try:
+                data = agilent.query("READ?")
+                data = data.split(",")
+                important["Agilent_1"] = float(data[0].split(" ")[0])
+                print important["Agilent_1"]
+                important["Agilent_2"] = float(data[4].split(" ")[0])
+                print important["Agilent_2"]
+            except Exception, e:
+                print str(e)
+            for key in agilent_mon_info:                                             # Update monitoring info
+                    agilent_mon_info[key][1].append(important[agilent_mon_info[key][2]])  
+            if len(agilent_mon_info[key][1]) > mon_length:
+                agilent_mon_info[key][1].pop(0)
+            if monitor == "Agilent_1" or monitor == "Agilent_2":                                         # If requesting wavenumber, update the monitor graph
+                monitor_data = agilent_mon_info[monitor][1]
+                monitor_plot = zip(monitor_xaxis[:useful["view_length"]],monitor_data[-useful["view_length"]:])
+                monitor_line = wxplot.PolyLine(monitor_plot)
+                mon_gc = wxplot.PlotGraphics([monitor_line],"Agilent","Entry",agilent_mon_info[monitor][0])
+                mon_canvas.Draw(mon_gc,yAxis=(min(monitor_data[-useful["view_length"]:]),max(monitor_data[-useful["view_length"]:])))
+        print "Closing Agilent grabbing"
+
 class wavemeter_thread(threading.Thread):                       # Creating threading class for commumation with wavemeter
     def __init__(self):
         threading.Thread.__init__(self)                         # Initiate thread
@@ -316,14 +377,14 @@ class wavemeter_thread(threading.Thread):                       # Creating threa
         self.getlambda = self.handles.CLGetLambdaReading                # Load get lamda function
         self.getpower = self.handles.CLGetPowerReading                  # Load get power function
 
-        self.CommPort = int(5)                                          # Define the CommPort the wavemeter is on
+        self.CommPort = int(comm_port.GetValue())                                        # Define the CommPort the wavemeter is on
         print "Using Value:", str(self.CommPort)                        # Print to confirm
         self.DevHandle = self.opendevice(self.CommPort)                 # Open communication with wavemeter on port number
         if self.DevHandle == 1:
             print "Connected to Device"                                 # Connect to device and print values
-            important["wavenumber"] = self.getlambda(self.DevHandle)
+            important["Wavenumber"] = self.getlambda(self.DevHandle)
             self.power = self.getpower(self.DevHandle)
-            print "Wavenumber: ", important["wavenumber"]
+            print "Wavenumber: ", important["Wavenumber"]
             print "Power: ", self.power
         else:
             print "Failed to connect to device"                         # Print warning if connection fails
@@ -332,12 +393,12 @@ class wavemeter_thread(threading.Thread):                       # Creating threa
         while operations["wave_connected"] == True:                     # Initiate loop for grabbing data
             time.sleep(0.1)
             try:
-                important["wavenumber"] = self.getlambda(self.DevHandle)# Grab wavenumber
+                important["Wavenumber"] = self.getlambda(self.DevHandle)# Grab wavenumber
                 self.power = self.getpower(self.DevHandle)              # Grab power
             except Exception, e:
                 print str(e)
             if operations["wave_connected"] == True:                    # Annoyingly this has to be included in the loop or else it hangs up on writing to the GUI
-                wn_label.SetLabel(str(round(important["wavenumber"],3))+" cm-1")    # Set the wavenumber in the GUI
+                wn_label.SetLabel(str(round(important["Wavenumber"],3))+" cm-1")    # Set the wavenumber in the GUI
                 power_label.SetLabel(str(round(self.power,3))+" mW")                # Set the power in the GUI
 
                 for key in wm_mon_info:                                             # Update monitoring info
@@ -346,10 +407,10 @@ class wavemeter_thread(threading.Thread):                       # Creating threa
                     wm_mon_info[key][1].pop(0)
                 if monitor == "Wavenumber":                                         # If requesting wavenumber, update the monitor graph
                     monitor_data = wm_mon_info[monitor][1]
-                    monitor_plot = zip(monitor_xaxis[:important["view_length"]],monitor_data[-important["view_length"]:])
+                    monitor_plot = zip(monitor_xaxis[:useful["view_length"]],monitor_data[-useful["view_length"]:])
                     monitor_line = wxplot.PolyLine(monitor_plot)
                     mon_gc = wxplot.PlotGraphics([monitor_line],"Monitor","Entry",wm_mon_info[monitor][0])
-                    mon_canvas.Draw(mon_gc,yAxis=(min(monitor_data[-important["view_length"]:]),max(monitor_data[-important["view_length"]:])))
+                    mon_canvas.Draw(mon_gc,yAxis=(min(monitor_data[-useful["view_length"]:]),max(monitor_data[-useful["view_length"]:])))
         print "Closing Wavemeter Device"
         self.DevHandle = self.closedevice(self.CommPort)                # Close connection with device
 
@@ -425,33 +486,33 @@ class streaming_thread(threading.Thread):                       # Creating threa
                 s1_data['y'] = np.array(waveform)   # Set s1 y data to scope trace
                 xtime = datetime.datetime.now().strftime('%y-%m-%d %H:%M:%S.%f')
                 s1.write(s1_data)                   # Write scope trace
-                if abs(important["tisadiff"]) < 1.0:
+                if abs(important["Lock Difference"]) < 1.0:
                     colorset = 'lightgreen'         # Set colour scheme depending on lock difference
                 else:
                     colorset = 'red'
-                if important["errstate"] == 0:      # If no error update lock difference in kHz using FSR of etalon = 300 MHz
-                    sendytisa = important["tisadiff"]*300000/important["henewidth"]
+                if important["Error State"] == 0:      # If no error update lock difference in kHz using FSR of etalon = 300 MHz
+                    sendytisa = important["Lock Difference"]*300000/important["HeNe Width"]
                 s2.write(dict(x=xtime,y=sendytisa,marker=Marker(color=colorset)))
-                if important["errstate"] == 1:      # If error show messages...
+                if important["Error State"] == 1:      # If error show messages...
                     s3.write(dict(text=["LOCKING ERROR",""]))
-                    s4.write(dict(text=["",str(round(important["wavenumber"],4))+" cm-1"]))
-                elif important["tisadiff"] == lockold and important["tisadiff"] == lockoldold:
+                    s4.write(dict(text=["",str(round(important["Wavenumber"],4))+" cm-1"]))
+                elif important["Lock Difference"] == lockold and important["Lock Difference"] == lockoldold:
                     s3.write(dict(text=["LOCKING ERROR","Locking Program Might Not Be Running"]))
-                    s4.write(dict(text=["",str(round(important["wavenumber"],4))+" cm-1"]))
+                    s4.write(dict(text=["",str(round(important["Wavenumber"],4))+" cm-1"]))
                 elif (abs(important["Kp"]) == 0 or abs(important["Kp"]) == 0.0) and (abs(important["Ki"]) == 0 or abs(important["Ki"]) == 0.0):
                     s3.write(dict(text=["",""]))
-                    s4.write(dict(text=["Free Running",str(round(important["wavenumber"],4))+" cm-1"]))
+                    s4.write(dict(text=["Free Running",str(round(important["Wavenumber"],4))+" cm-1"]))
                     s5.write(dict(y=sendytisa))
-                elif abs(important["tisadiff"]) < 1.0:
+                elif abs(important["Lock Difference"]) < 1.0:
                     s3.write(dict(text=["",""]))
-                    s4.write(dict(text=["Locked",str(round(important["wavenumber"],4))+" cm-1"]))
+                    s4.write(dict(text=["Locked",str(round(important["Wavenumber"],4))+" cm-1"]))
                     s5.write(dict(y=sendytisa))
                 else:
                     s3.write(dict(text=["",""]))
-                    s4.write(dict(text=["",str(round(important["wavenumber"],4))+" cm-1"]))
+                    s4.write(dict(text=["",str(round(important["Wavenumber"],4))+" cm-1"]))
                     s5.write(dict(y=sendytisa))
                 lockoldold = lockold                # Pass on old value
-                lockold = important["tisadiff"]     # Save value
+                lockold = important["Lock Difference"]     # Save value
                 stream_label.SetLabel("Data Sent: "+str(datetime.datetime.now().strftime('%H:%M:%S')))      # Update GUI of time sent
             except Exception,e:
                 print str(e)
@@ -475,19 +536,24 @@ class logging_thread(threading.Thread):                        # Creating thread
         self.filename2 = "M:\Laser_Spec\Laser_Logs\\" + str(time.asctime()).replace(':','') + ".csv"
         self.f1 = open(self.filename1,"a")
         self.f2 = open(self.filename2,"a")
-        self.txt = "Laser Loc,Left Hene Loc,Right Hene Loc,Lock Difference,Locking Voltage,Kp,Lock Error State,Wavenumber,Time\n"
+        self.txt = str()
+        for key in mon_options:
+            self.txt += key
+            self.txt += ','
+        self.txt += "Time Stamp\n"
         self.f1.write(self.txt)
         self.f2.write(self.txt)
         log_status.SetLabel(self.filename1)                     # Show local filename in GUI
         while operations["logging"] == True:
-            self.txt = (str(ptisa0[2]) + ',' + str(phenel0[2]) + ','
-                            + str(phener0[2]) + ',' + str(important["tisadiff"]) + ','
-                            + str(important["vout"]) + ',' + str(important["Kp"]) + ','
-                            + str(important["errstate"]) + ',' + str(important["wavenumber"]) + ','
-                            + str(datetime.datetime.now().strftime('%H:%M:%S')) + "\n")
-            self.f1.write(self.txt)
-            self.f2.write(self.txt)
-            log_label.SetLabel("Saving Log: "+str(datetime.datetime.now().strftime('%H:%M:%S')))
+            self.txt = str()
+            for key in mon_options:
+                self.txt += str(important[key])
+                self.txt += ','
+            self.txt += str(datetime.datetime.now().strftime('%c')) + "\n"
+            if operations["go"] == True:
+                self.f1.write(self.txt)
+                self.f2.write(self.txt)
+                log_label.SetLabel("Saving Log: "+str(datetime.datetime.now().strftime('%H:%M:%S')))
             time.sleep(5)
         print "Stopping data logging"
         self.f1.close()
@@ -500,6 +566,7 @@ class PlotGraph(wxplot.PlotCanvas):                     # Class to create canvas
         line = wxplot.PolyLine(self.data)
         gc = wxplot.PlotGraphics([line],"Scope","Channel","Voltage")
         self.Draw(gc,xAxis=(0,1200),yAxis=(-1,0))
+        #self.Draw(gc,xAxis=(0,1200),yAxis=(0,6))       # Added for other etalon
 
 class PlotMonitor(wxplot.PlotCanvas):                   # Class to create canvas for showing monitor info
     def __init__(self,parent,id):
@@ -514,10 +581,13 @@ class laser_lock_wx(wx.Frame):                                  # Create Class f
         self.parent = parent                                    # Keep track of parent if needed
         self.initialize(id)                                     # Start initialize function
 
+    ####### Declare globals
+
+    global important, useful, operations
+
     ####### Main operation functions
 
     def start_lock(self,event):                                 # Function to start locking thread
-        global operations
         if operations["connected"] == False:                    # Check that the scope has been connected
             main_label.SetLabel("Scope not connected!")
         elif operations["go"] == True:
@@ -529,7 +599,6 @@ class laser_lock_wx(wx.Frame):                                  # Create Class f
             thread1.start()                                     # Start thread
 
     def start_wavemeter(self,event):                            # Function to start wavemeter thread
-        global operations
         if operations["wave_connected"] == True:
             main_label.SetLabel("Wavemeter already connected")
         else:
@@ -540,7 +609,6 @@ class laser_lock_wx(wx.Frame):                                  # Create Class f
             thread2.start()  
 
     def start_stream(self,event):                               # Function to start streaming thread
-        global operations
         if operations["streaming"] == True:
             main_label.SetLabel("Already streaming data" )
         else:
@@ -551,7 +619,6 @@ class laser_lock_wx(wx.Frame):                                  # Create Class f
             thread3.start()
 
     def start_logging(self,event):                              # Function to start logging data thread
-        global operations
         if operations["logging"] == True:
             main_label.SetLabel("Already logging data")
         else:
@@ -561,7 +628,6 @@ class laser_lock_wx(wx.Frame):                                  # Create Class f
             thread4.start()       
 
     def stop_lock(self,event):                                  # Function to stop locking
-        global operations, important
         if operations["connected"] == False:                    # Check that the scope has been connected
             main_label.SetLabel("Scope not connected!")
         elif operations["go"] == False:
@@ -575,7 +641,6 @@ class laser_lock_wx(wx.Frame):                                  # Create Class f
 
     def quit_program(self,event):                               # Function to quit whole program safely
         print "Closing all connections, will quit in 5 seconds!"
-        global operations
         for key in operations:  operations[key] = False         # Set all operations to false
         time.sleep(5)                                           # Give time for programs to stop
         try:
@@ -586,23 +651,30 @@ class laser_lock_wx(wx.Frame):                                  # Create Class f
             pass                                       
         self.Close(True)                                        # Destroy window    
 
-    ####### Functions dealing with the scope                                            
+    ####### Functions dealing with the scope
+
+    def display_devices(self,event):                            # Function to display connected devices in terminal
+        global rm,devices
+        main_label.SetLabel("See Terminal for Device List")
+        rm = visa.ResourceManager()                                                 # Create a resource manager to open up communications with the Rigol Device
+        devices = rm.list_resources()                                               # Find resources to connect to
+        print "These are the devices connected to the computer:\n"
+        for i in xrange(len(devices)):
+            print i, devices[i]
+        operations["displayed"] = True
 
     def connect_scope(self,event):                              # Function to connect scope
-        global rigol, operations
+        global rigol,rm,devices
         if operations["connected"] == True:                     # Check scope is not already connected
             main_label.SetLabel("Scope is already connected")
+        elif operations["displayed"] == False:
+            main_label.SetLabel("Please Display Devices First")
         else:
             try:
-                main_label.SetLabel("Connecting...")
-                rm = visa.ResourceManager()                                                 # Create a resource manager to open up communications with the Rigol Device
-                devices = rm.list_resources()                                               # Find resources to connect to
-                print "These are the devices connected to the computer:\n"
-                for i in xrange(len(devices)):
-                    print i, devices[i]                                                     # Print list of resources
+                main_label.SetLabel("Connecting...")                                            
                 rigol = rm.open_resource(devices[int(self.scope_num.GetValue())])           # Connect to device number stated in GUI
                 print "\nConnected with device", rigol.query("*IDN?")
-                rigol.write(":WAVeform:SOURce CHANnel3")                                    # Make sure scope is set up to outfut waveform from Channel 3
+                rigol.write(":WAVeform:SOURce CHANnel"+str(int(self.pd_channel.GetValue())))            # Make sure scope is set up to outfut waveform from Channel 3
                 rampoff.SetValue(round(float(rigol.query("SOURCE1:VOLTAGE:OFFSET?")),4))
                 dcoff.SetValue(round(float(rigol.query("SOURCE2:VOLTAGE:OFFSET?")),4))      # Set ramp and vout values in GUI depending on how the scope is set
                 self.scope_label.SetLabel("Connected with device")                          # Change GUI to show scope is connected
@@ -623,8 +695,9 @@ class laser_lock_wx(wx.Frame):                                  # Create Class f
                 pass
 
     def reset_scope(self,event):                                # Function to reset scope
-        global operations
-        if operations["connected"] == False:                    # Check that the scope has been connected
+        if operations["displayed"] == False:
+            main_label.SetLabel("Please Display Devices First")
+        elif operations["connected"] == False:                    # Check that the scope has been connected
             main_label.SetLabel("Scope not connected") 
         elif operations["go"] == True:
             main_label.SetLabel("Not when locking!")            # Check program isn't already running
@@ -643,7 +716,7 @@ class laser_lock_wx(wx.Frame):                                  # Create Class f
             rigol.write(":CHAN2:SCAL 0.5")
             rigol.write(":CHAN3:DISP ON")
             rigol.write(":CHAN3:PROB 1")
-            rigol.write(":CHAN3:SCAL 0.075")
+            rigol.write(":CHAN3:SCAL 0.1")
             rigol.write(":CHAN3:OFFS 0.3")
             rigol.write("TIM:MAIN:SCAL 0.002")
             rigol.write("TRIG:EDG:LEV 0.5")
@@ -651,8 +724,8 @@ class laser_lock_wx(wx.Frame):                                  # Create Class f
             
             rigol.write(":SOUR1:FUNC RAMP")                     # Set up the Ramp
             rigol.write(":SOUR1:VOLT 2.5")
-            rigol.write(":SOUR1:VOLT:OFFS 0.5")
-            rampoff.SetValue(0.5)
+            rigol.write(":SOUR1:VOLT:OFFS 0.1")
+            rampoff.SetValue(0.1)
             rigol.write(":SOUR1:FREQ 15")
             rigol.write(":SOUR1:OUTP 1")
             
@@ -662,10 +735,14 @@ class laser_lock_wx(wx.Frame):                                  # Create Class f
             rigol.write(":SOUR1:FUNC:RAMP:SYMM 50")
             
             rigol.write(":SOUR2:FUNC DC")                       # Set up the TiSa voltage feedback
-            rigol.write(":SOUR2:VOLT:OFFS 0.0")
-            dcoff.SetValue(0.0)
+            rigol.write(":SOUR2:VOLT:OFFS 0.5")
+            dcoff.SetValue(0.5)
             rigol.write(":SOUR2:OUTP 1")
-            rigol.write(":WAVeform:SOURce CHANnel3")            # Make sure scope is set up to outfut waveform from Channel 3
+            rigol.write(":WAVeform:SOURce CHANnel"+str(int(self.pd_channel.GetValue())))
+
+            time.sleep(1)
+            rigol.write(":ACQ:TYPE AVER")
+            rigol.write(":ACQ:AVER 4")
 
             print "\nThe scope should have reset and set conditions for the locking system"
             print "\nThe scope should show and be triggered off the ramp, show the photodiode signal and the output voltage to the laser."
@@ -678,13 +755,12 @@ class laser_lock_wx(wx.Frame):                                  # Create Class f
             print "The photodiode signal should be viewed on Channel 3 via the Coherent Analyzer."
             print "Remember:  The HV amplifier can take up to 20 minutes to settle."
             time.sleep(1)
-            operations["grabbing"] = 1
+            operations["grabbing"] = True
             thread5 = grabbing_thread()                         # Create thread
             thread5.start()                                     # Start thread
             main_label.SetLabel("Ready to go!") 
 
     def move_ramp(self,event):
-        global important
         if operations["connected"] == False:                                 # Check that the scope has been connected
             main_label.SetLabel("Scope not connected!")
         else:
@@ -692,16 +768,15 @@ class laser_lock_wx(wx.Frame):                                  # Create Class f
                 rigol.write("TRIG:EDG:LEV "+str(rampoff.GetValue()))         # Set trigger level on scope
                 rigol.write(":SOUR1:VOLT:OFFS "+str(rampoff.GetValue()))     # Set ramp offset on scope
                 rigol.write(":CHAN1:OFFS "+str(-1*rampoff.GetValue()))
-            important["offset"] = float(rampoff.GetValue())                  # Change offset for locking program
+            important["Ramp Offset"] = float(rampoff.GetValue())                  # Change offset for locking program
 
     def move_tisa(self,event):
-        global important
         if operations["connected"] == False:                                 # Check that the scope has been connected
             main_label.SetLabel("Scope not connected!")
         else:
             if operations["go"] == False:
                 rigol.write(":SOUR2:VOLT:OFFS "+str(dcoff.GetValue()))       # Set locking voltage on scope
-            important["vout"] = float(dcoff.GetValue())                      # Change vout for locking program
+            important["V Out"] = float(dcoff.GetValue())                      # Change vout for locking program
 
     def print_help(self,event):
         print "If list of network devices does not load there is a communications error.  try these steps in order before contacting T Procter for help:"
@@ -712,45 +787,82 @@ class laser_lock_wx(wx.Frame):                                  # Create Class f
         print "3. On Rigol scope: Go to Utility menue and change USB device from Computer to PictBridge and back again"
         print "\n4. Restart this Windows Machine"
 
+    ####### Functions dealing with the agilent unit
+
+    def start_agilent_grab(self,event):                              # Function to connect scope
+        global agilent,rm,devices
+        if operations["agilent_grab"] == True:                     # Check agilent is not already connected
+            main_label.SetLabel("Agilent is already logging")
+        elif operations["displayed"] == False:
+            main_label.SetLabel("Please Display Devices First")
+        else:
+            try:
+                main_label.SetLabel("Connecting...")                                            
+                agilent = rm.open_resource(devices[int(self.agilent_num.GetValue())])           # Connect to device number stated in GUI
+                print "\nConnected with device", agilent.query("*IDN?")
+                agilent.write("ROUT:SCAN (@"+str(channel1_num.GetValue())+","+str(channel2_num.GetValue())+")")
+                agilent.write("TRIG:SOUR IMM")
+                agilent.write("TRIG:COUNT 1")               
+                print agilent.query("READ?")                                                 # Acquire first data point
+                operations["agilent_grab"] = True
+                main_label.SetLabel("Grabbing Agilent Data")
+                thread6 = agilent_thread()                                                 # Create thread to grab and plot scope data
+                thread6.start()  
+            except:
+                print "Failed to connect with device"                  # Connection may fail
+                pass
+
+    def stop_agilent_grab(self,event):
+        if operations["agilent_grab"] == True:
+            operations["agilent_grab"] = False
+            main_label.SetLabel("Stopping Agilent Data")
+
     ####### Functions for changing variables with widgets
 
     def change_feedback(self,event):
-        global important
-        important["Kpset"] = float(event.GetValue())                        # Change the set feedback constant
+        useful["Kpset"] = float(event.GetValue())                        # Change the set feedback constant
 
     def change_rampfeed(self,event):
-        global important
-        important["rampKp"] = float(rampfeed.GetValue())                    # Change the ramp feedback constant
+        important["Ramp Kp"] = float(rampfeed.GetValue())                    # Change the ramp feedback constant
 
     def change_setpoint(self,event):
-        global important
         important["Kp"], important["Ki"] = 0.0, 0.0           
-        important["lockpos"] = float(setpoint.GetValue())                   # Change set point and set Kp to 0 for smoother shift
+        useful["lockpos"] = float(setpoint.GetValue())                   # Change set point and set Kp to 0 for smoother shift
 
-    def change_integral(self,event):
-        global important          
-        important["Kiset"] = float(integral.GetValue())                     # Change Ki
+    def change_integral(self,event):         
+        useful["Kiset"] = float(integral.GetValue())                     # Change Ki
 
     def change_background(self,event):
-        global important
-        important["background"] = float(excludeentry.GetValue())            # Change exclusion level
+        useful["background"] = float(excludeentry.GetValue())            # Change exclusion level
+
+    def change_graph(self,event):
+        global graph_axes
+        if (int(gr_x_max.GetValue()) - 5) > int(gr_x_min.GetValue()) and float(gr_y_max.GetValue()) > float(gr_y_min.GetValue()):
+            graph_axes[0] = int(gr_x_min.GetValue())                            # Change graph axes
+            graph_axes[1] = int(gr_x_max.GetValue())
+            graph_axes[2] = float(gr_y_min.GetValue())
+            graph_axes[3] = float(gr_y_max.GetValue())
 
     def update_params(self,event):
         global phenel0, ptisa0, phener0                         # Update fitting parameters with values from GUI
         phenel0[2] = float(henelentry.GetValue())
         ptisa0[2] = float(laserentry.GetValue())
         phener0[2] = float(henerentry.GetValue())
-        important['henewidth']=phener0[2]-phenel0[2]
-        important['henecent']=(phener0[2]+phenel0[2])/2
+        important["HeNe Center"]=phener0[2]-phenel0[2]
+        important["HeNe Center"]=(phener0[2]+phenel0[2])/2
 
     def OnSelect(self, e):                                                  # Change what monitor graph is showing
         global monitor
         monitor = e.GetString()
-        self.mon_name.SetLabel(monitor)
 
     def View_Select(self,e):
-        global important
-        important["view_length"] = int(e.GetString())
+        useful["view_length"] = int(e.GetString())
+
+    def InvertData(self,e):
+        if self.invert_box.GetValue():
+            useful["invert"] = -1
+        else:
+            useful["invert"] = 1
 
     ####### Functions to create widgets for GUI
 
@@ -792,13 +904,16 @@ class laser_lock_wx(wx.Frame):                                  # Create Class f
     ####### Create GUI Function
 
     def initialize(self,id):
-        global panel, important
+        global panel
         panel = wx.Panel(self,id)
 
         # Create Sizers
         self.mainSizer = wx.FlexGridSizer(1,2,1,1)
         self.mainSizer.AddGrowableCol(1,1)
         self.graphSizer = wx.GridSizer(2,1,1,1)
+        self.graph_propertiesSizer = wx.FlexGridSizer(2,1,1,1)
+        self.graph_propertiesSizer.AddGrowableRow(1,1)
+        self.graph_propertiesSizer.AddGrowableCol(0,1)
         self.monitorSizer = wx.FlexGridSizer(2,1,1,1)
         self.monitorSizer.AddGrowableRow(1,1)
         self.monitorSizer.AddGrowableCol(0,1)
@@ -812,7 +927,7 @@ class laser_lock_wx(wx.Frame):                                  # Create Class f
         self.streamSizer = wx.GridSizer(1,3,1,1)
         self.endSizer = wx.GridSizer(1,2,1,1)
         
-        self.scopebox = wx.StaticBox(panel, label='Rigol Scope')
+        self.scopebox = wx.StaticBox(panel, label='VISA Devices')
         self.scopeBoxSizer = wx.StaticBoxSizer(self.scopebox,wx.VERTICAL)
         self.scopeSizer = wx.GridBagSizer(hgap=1, vgap=1)
 
@@ -845,29 +960,41 @@ class laser_lock_wx(wx.Frame):                                  # Create Class f
         self.statusSizer.AddMany([(main_label,0,wx.ALIGN_CENTER),(second_label,0,wx.ALIGN_CENTER)])
 
         # Fill Scope Sizer
-        self.scope_label = self.create_label(id,self.scopeSizer,'   Scope Not Connected   ',wx.RED,wx.BLACK,0,0,1,2,12)
-        self.device_label = self.create_label(id,self.scopeSizer,'VISA Device Number:',wx.NullColour,wx.BLACK,1,0,1,1,10)
-        self.scope_num = self.create_spinctrl(id,self.scopeSizer,'0',1,1,1,1,None,1,0,10)
-        self.connect_button = self.create_button(id,self.scopeSizer,'  Connect Scope  ',2,0,1,2,12,self.connect_scope)
-        self.reset_button = self.create_button(id,self.scopeSizer,'  Reset Scope  ',4,0,1,2,10,self.reset_scope)
+        global channel1_num,channel2_num
+        self.display_button = self.create_button(id,self.scopeSizer,'  Display Devices  ',0,0,1,2,12,self.display_devices)
+        self.scope_label = self.create_label(id,self.scopeSizer,'   Scope Not Connected   ',wx.RED,wx.BLACK,1,0,1,2,12)
+        self.device_label = self.create_label(id,self.scopeSizer,'Scope Device Num:',wx.NullColour,wx.BLACK,2,0,1,1,10)
+        self.scope_num = self.create_spinctrl(id,self.scopeSizer,'0',2,1,1,1,None,1,0,10)
+        self.connect_button = self.create_button(id,self.scopeSizer,'  Connect Scope  ',3,0,1,1,12,self.connect_scope)
+        self.reset_button = self.create_button(id,self.scopeSizer,'  Reset Scope  ',3,1,1,1,10,self.reset_scope)
+        self.agilent_label = self.create_label(id,self.scopeSizer,'Agilent Device Num:',wx.NullColour,wx.BLACK,4,0,1,1,10)
+        self.agilent_num = self.create_spinctrl(id,self.scopeSizer,'3',4,1,1,1,None,1,0,10)
+        self.channel1_label = self.create_label(id,self.scopeSizer,'Agilent_1 Channel Num:',wx.NullColour,wx.BLACK,5,0,1,1,10)
+        channel1_num = self.create_spinctrl(id,self.scopeSizer,'205',5,1,1,1,None,1,0,1000)
+        self.channel2_label = self.create_label(id,self.scopeSizer,'Agilent_2 Channel Num:',wx.NullColour,wx.BLACK,6,0,1,1,10)
+        channel2_num = self.create_spinctrl(id,self.scopeSizer,'206',6,1,1,1,None,1,0,1000)
+        self.agilent_start_button = self.create_button(id,self.scopeSizer,'Start Agilent Grab',7,0,1,1,10,self.start_agilent_grab)
+        self.agilent_stop_button = self.create_button(id,self.scopeSizer,'Stop Agilent Grab',7,1,1,1,10,self.stop_agilent_grab)
         self.scopeBoxSizer.Add(self.scopeSizer,0,wx.CENTER)
 
         # Fill Settings Sizer
         global rampoff, rampfeed, excludeentry, feedback, currentfeedback, integral, currentintegral
-        self.ramplabel = self.create_label(id,self.settingsSizer,'Ramp Offset:',wx.NullColour,wx.BLACK,0,0,1,1,10)
-        rampoff = self.create_spinctrl(id,self.settingsSizer,str(important["offset"]),0,1,1,1,self.move_ramp,0.01,-2,2)
-        self.rampfeed_label = self.create_label(id,self.settingsSizer,'Ramp Feedback:',wx.NullColour,wx.BLACK,1,0,1,1,10)
-        rampfeed = self.create_spinctrl(id,self.settingsSizer,str(important["rampKp"]),1,1,1,1,self.change_rampfeed,0.001,0,0.5)
-        self.excludelabel = self.create_label(id,self.settingsSizer,'Exclusion Level:',wx.NullColour,wx.BLACK,2,0,1,1,10)
-        excludeentry = self.create_spinctrl(id,self.settingsSizer,str(important["background"]),2,1,1,1,self.change_background,0.01,-1,0)
-        self.feedbacklabel = self.create_label(id,self.settingsSizer,'Kp Set:',wx.NullColour,wx.BLACK,3,0,1,1,10)
-        feedback = self.create_spinctrl(id,self.settingsSizer,str(important["Kpset"]),3,1,1,1,self.change_feedback,0.1,0,2)
-        self.feedbackcurrentlabel = self.create_label(id,self.settingsSizer,'Current Kp:',wx.NullColour,wx.BLACK,4,0,1,1,10)
-        currentfeedback = self.create_label(id,self.settingsSizer,str(important["Kp"]),wx.NullColour,wx.BLACK,4,1,1,1,10)
-        self.integral_label = self.create_label(id,self.settingsSizer,'Ki Set:',wx.NullColour,wx.BLACK,5,0,1,1,10)
-        integral = self.create_spinctrl(id,self.settingsSizer,str(important["Kiset"]),5,1,1,1,self.change_integral,0.1,0,1)
-        self.currentintegral_label = self.create_label(id,self.settingsSizer,'Current Ki:',wx.NullColour,wx.BLACK,6,0,1,1,10)
-        currentintegral = self.create_label(id,self.settingsSizer,str(important["Ki"]),wx.NullColour,wx.BLACK,6,1,1,1,10)      
+        self.pd_label = self.create_label(id,self.settingsSizer,'Scope PD Channel:',wx.NullColour,wx.BLACK,0,0,1,1,10)
+        self.pd_channel = self.create_spinctrl(id,self.settingsSizer,str(3),0,1,1,1,None,1,1,4)
+        self.ramplabel = self.create_label(id,self.settingsSizer,'Ramp Offset:',wx.NullColour,wx.BLACK,1,0,1,1,10)
+        rampoff = self.create_spinctrl(id,self.settingsSizer,str(important["Ramp Offset"]),1,1,1,1,self.move_ramp,0.01,-2,2)
+        self.rampfeed_label = self.create_label(id,self.settingsSizer,'Ramp Feedback:',wx.NullColour,wx.BLACK,2,0,1,1,10)
+        rampfeed = self.create_spinctrl(id,self.settingsSizer,str(important["Ramp Kp"]),2,1,1,1,self.change_rampfeed,0.001,0,0.5)
+        self.excludelabel = self.create_label(id,self.settingsSizer,'Exclusion Level:',wx.NullColour,wx.BLACK,3,0,1,1,10)
+        excludeentry = self.create_spinctrl(id,self.settingsSizer,str(useful["background"]),3,1,1,1,self.change_background,0.01,-50,0)
+        self.feedbacklabel = self.create_label(id,self.settingsSizer,'Kp Set:',wx.NullColour,wx.BLACK,4,0,1,1,10)
+        feedback = self.create_spinctrl(id,self.settingsSizer,str(useful["Kpset"]),4,1,1,1,self.change_feedback,0.1,0,2)
+        self.feedbackcurrentlabel = self.create_label(id,self.settingsSizer,'Current Kp:',wx.NullColour,wx.BLACK,5,0,1,1,10)
+        currentfeedback = self.create_label(id,self.settingsSizer,str(important["Kp"]),wx.NullColour,wx.BLACK,5,1,1,1,10)
+        self.integral_label = self.create_label(id,self.settingsSizer,'Ki Set:',wx.NullColour,wx.BLACK,6,0,1,1,10)
+        integral = self.create_spinctrl(id,self.settingsSizer,str(useful["Kiset"]),6,1,1,1,self.change_integral,0.1,0,1)
+        self.currentintegral_label = self.create_label(id,self.settingsSizer,'Current Ki:',wx.NullColour,wx.BLACK,7,0,1,1,10)
+        currentintegral = self.create_label(id,self.settingsSizer,str(important["Ki"]),wx.NullColour,wx.BLACK,7,1,1,1,10)      
         self.settingsBoxSizer.Add(self.settingsSizer,0,wx.CENTER)
 
         # Fill Lock Sizer
@@ -883,11 +1010,11 @@ class laser_lock_wx(wx.Frame):                                  # Create Class f
         henerfit = self.create_label(id,self.lockSizer,'Not Yet',wx.YELLOW,wx.BLACK,2,4,1,2,12)
 
         self.dclabel = self.create_label(id,self.lockSizer,'V Out:',wx.NullColour,wx.BLACK,4,0,1,1,10)
-        dcoff = self.create_spinctrl(id,self.lockSizer,str(important["vout"]),4,1,1,1,self.move_tisa,0.01,-2,2)
+        dcoff = self.create_spinctrl(id,self.lockSizer,str(important["V Out"]),4,1,1,1,self.move_tisa,0.01,-2,2)
         self.setpointlabel = self.create_label(id,self.lockSizer,'Set Point:',wx.NullColour,wx.BLACK,4,2,1,1,10)
-        setpoint = self.create_spinctrl(id,self.lockSizer,str(important["lockpos"]),4,3,1,1,self.change_setpoint,0.01,-0.9,0.9)
+        setpoint = self.create_spinctrl(id,self.lockSizer,str(useful["lockpos"]),4,3,1,1,self.change_setpoint,0.01,-0.9,0.9)
         self.diff_label = self.create_label(id,self.lockSizer,'Lock Diff:',wx.NullColour,wx.BLACK,4,4,1,1,10)
-        laser_diff = self.create_label(id,self.lockSizer,str(important["tisadiff"]),wx.NullColour,wx.BLACK,4,5,1,1,10)
+        laser_diff = self.create_label(id,self.lockSizer,str(important["Lock Difference"]),wx.NullColour,wx.BLACK,4,5,1,1,10)
         self.lockBoxSizer.Add(self.lockSizer,0,wx.CENTER)
 
         # Fill Control Sizer
@@ -898,17 +1025,25 @@ class laser_lock_wx(wx.Frame):                                  # Create Class f
         self.controlSizer.AddMany([(self.start_button,0,wx.EXPAND),(self.stop_button,0,wx.EXPAND)])
 
         # Fill Wavemeter Sizer
-        global wn_label, power_label
+        global wn_label, power_label, comm_port
         self.wavemeter_button = wx.Button(panel,id,label='Connect Wavemeter')
         self.Bind(wx.EVT_BUTTON,self.start_wavemeter,self.wavemeter_button)
         font = wx.Font(20,wx.DECORATIVE,wx.NORMAL,wx.NORMAL)
         wn_label = wx.StaticText(panel,id,label='Wave Number:')
         wn_label.SetFont(font)
+        self.miniwavesizer = wx.GridSizer(1,3,1,1)
+        self.comm_label = wx.StaticText(panel,id,label='CommPort Num:')
+        self.miniwavesizer.Add(self.comm_label,0,wx.LEFT,5)
+        comm_port = wx.SpinCtrlDouble(panel,id,value=str(5),size=(60,20))
+        comm_port.SetRange(0,10)
+        comm_port.SetIncrement(1)
+        self.miniwavesizer.Add(comm_port,0,wx.LEFT,5)
         self.wave_label = wx.StaticText(panel,id,label='Not Connected')
+        self.miniwavesizer.Add(self.wave_label,0,wx.LEFT,5)
         power_label = wx.StaticText(panel,id,label='Power:')
         power_label.SetFont(font)
         self.waveSizer.AddMany([(self.wavemeter_button,0,wx.ALIGN_CENTER|wx.EXPAND),(wn_label,0,wx.ALIGN_CENTER),
-                                (self.wave_label,0,wx.ALIGN_CENTER),(power_label,0,wx.ALIGN_CENTER)])
+                                (self.miniwavesizer,0,wx.ALIGN_CENTER),(power_label,0,wx.ALIGN_CENTER)])
 
         # Fill Log Sizer
         global log_status, log_label
@@ -953,21 +1088,60 @@ class laser_lock_wx(wx.Frame):                                  # Create Class f
         self.topSizer.Add(wx.StaticLine(panel),0,wx.ALL|wx.EXPAND,3)
         self.topSizer.Add(self.endSizer,0,wx.ALL|wx.EXPAND,5)
 
+        # Fill graph properties sizer
+
+        global gr_x_min, gr_x_max, gr_y_min, gr_y_max
+        self.graphlabelsizer = wx.BoxSizer(wx.HORIZONTAL)
+
+        self.x_min_label = wx.StaticText(panel,id,label='X axes min:')
+        self.graphlabelsizer.Add(self.x_min_label,0,wx.LEFT,5)
+        gr_x_min = wx.SpinCtrlDouble(panel,id,value=str(graph_axes[0]),size=(60,20))
+        gr_x_min.SetRange(graph_axes[0]-1000,graph_axes[0]+1000)
+        gr_x_min.SetIncrement(1)
+        gr_x_min.Bind(wx.EVT_SPINCTRLDOUBLE,self.change_graph)
+        self.graphlabelsizer.Add(gr_x_min,0,wx.LEFT,5)
+
+        self.x_max_label = wx.StaticText(panel,id,label='X axes max:')
+        self.graphlabelsizer.Add(self.x_max_label,0,wx.LEFT,5)
+        gr_x_max = wx.SpinCtrlDouble(panel,id,value=str(graph_axes[1]),size=(60,20))
+        gr_x_max.SetRange(graph_axes[1]-1000,graph_axes[1]+1000)
+        gr_x_max.SetIncrement(1)
+        gr_x_max.Bind(wx.EVT_SPINCTRLDOUBLE,self.change_graph)
+        self.graphlabelsizer.Add(gr_x_max,0,wx.LEFT,5)
+
+        self.y_min_label = wx.StaticText(panel,id,label='Y axes min:')
+        self.graphlabelsizer.Add(self.y_min_label,0,wx.LEFT,5)        
+        gr_y_min = wx.SpinCtrlDouble(panel,id,value=str(graph_axes[2]),size=(60,20))
+        gr_y_min.SetRange(graph_axes[2]-1000,graph_axes[2]+1000)
+        gr_y_min.SetIncrement(0.1)
+        gr_y_min.Bind(wx.EVT_SPINCTRLDOUBLE,self.change_graph)
+        self.graphlabelsizer.Add(gr_y_min,0,wx.LEFT,5)
+
+        self.y_max_label = wx.StaticText(panel,id,label='Y axes max:')
+        self.graphlabelsizer.Add(self.y_max_label,0,wx.LEFT,5)        
+        gr_y_max = wx.SpinCtrlDouble(panel,id,value=str(graph_axes[3]),size=(60,20))
+        gr_y_max.SetRange(graph_axes[3]-1000,graph_axes[3]+1000)
+        gr_y_max.SetIncrement(0.1)
+        gr_y_max.Bind(wx.EVT_SPINCTRLDOUBLE,self.change_graph)
+        self.graphlabelsizer.Add(gr_y_max,0,wx.LEFT,5)
+ 
+        self.invert_box = wx.CheckBox(panel,id,'Invert')
+        self.invert_box.SetValue(False)
+        wx.EVT_CHECKBOX(self, self.invert_box.GetId(),self.InvertData)
+        self.graphlabelsizer.Add(self.invert_box,0,wx.LEFT,15)
+
         # Fill Monitor sizer
-        mon_options = ['Lock Difference','HeNe Width',
-        'HeNe Center','V Out','Ramp Offset','Error State','Kp','Ki','Wavenumber']
         view_options = ['100','500','1000']
         self.monlabelSizer = wx.BoxSizer(wx.HORIZONTAL)
         self.mon_label = wx.StaticText(panel,id,label='Currently Monitoring:')
         self.monlabelSizer.Add(self.mon_label,0,wx.LEFT,10)
-        self.mon_name = wx.StaticText(panel,id,label='Lock Difference')
-        self.monlabelSizer.Add(self.mon_name,0,wx.LEFT,10)
-        self.combo = wx.ComboBox(panel,id,value=mon_options[0],choices=mon_options,style=wx.CB_READONLY)
+        self.combo = wx.ComboBox(panel,id,value=monitor,choices=mon_options,style=wx.CB_READONLY,size=(200,30))
         self.combo.Bind(wx.EVT_COMBOBOX,self.OnSelect)
-        self.monlabelSizer.Add(self.combo,0,wx.ALIGN_RIGHT|wx.LEFT,100)
+        self.monlabelSizer.Add(self.combo,0,wx.LEFT,10)
         self.view_length = wx.ComboBox(panel,id,value=view_options[1],choices=view_options,style=wx.CB_READONLY)
         self.view_length.Bind(wx.EVT_COMBOBOX,self.View_Select)
         self.monlabelSizer.Add(self.view_length,0,wx.ALIGN_RIGHT|wx.LEFT,100)
+
         global mon_canvas
         mon_canvas = PlotMonitor(panel,id)
 
@@ -977,7 +1151,11 @@ class laser_lock_wx(wx.Frame):                                  # Create Class f
         # Fill Graph sizer
         global canvas
         canvas = PlotGraph(panel,id)
-        self.graphSizer.Add(canvas,0,wx.ALL|wx.EXPAND,5)
+
+        self.graph_propertiesSizer.Add(self.graphlabelsizer,0,wx.ALL|wx.LEFT,5)
+        self.graph_propertiesSizer.Add(canvas,0,wx.ALL|wx.EXPAND,5)
+
+        self.graphSizer.Add(self.graph_propertiesSizer,0,wx.ALL|wx.EXPAND,5)
         self.graphSizer.Add(self.monitorSizer,0,wx.ALL|wx.EXPAND,5)
 
         # Fill Main sizer
@@ -986,7 +1164,7 @@ class laser_lock_wx(wx.Frame):                                  # Create Class f
 
         # Set panel attributes
         panel.SetSizer(self.mainSizer)
-        self.SetSizeHints(1200,770,2000,770)
+        self.SetSizeHints(1300,830,2000,830)                #(Width Min, Height Min, Width Max, Height Max)
         self.topSizer.Fit(self)
         
 if __name__  == "__main__":
