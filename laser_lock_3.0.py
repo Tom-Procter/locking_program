@@ -3,7 +3,7 @@
 ### Basic build of gui made with help from http://sebsauvage.net/python/gui/
 ### Help for the streaming class obtained from tutorials on plot.ly ###
 
-### Update 2.2 July 14th 2015, adding Agilent monitor support
+### Change to 3.0 November 2015
 
 ### When building with pyinstaller use: pyinstaller "~project.py" --hidden-import=scipy.special._ufuncs_cxx
 
