@@ -243,6 +243,8 @@ class lock_thread(threading.Thread):        # Create Threading Class for locking
                 important["V Out"] -= (important["Kp"] * self.error) + (important["Ki"] * (sum(self.errors)/len(self.errors)))        
                 if abs(important["V Out"]) > 5.0:
                     important["V Out"] = np.sign(important["V Out"])*5.0                  # Limit vout to +-5.0
+                if abs(important["V Out"]) > 2.0:
+                    main_label.SetLabel("WARNING! Approaching Vout Limit!")
                 self.voutwrite = round(important["V Out"],3)                             # Round write voltage to 3 dp
                 if self.voutwrite != self.prevvout:
                     try:
@@ -382,6 +384,8 @@ class wavemeter_thread(threading.Thread):                       # Creating threa
         self.DevHandle = self.opendevice(self.CommPort)                 # Open communication with wavemeter on port number
         if self.DevHandle == 1:
             print "Connected to Device"                                 # Connect to device and print values
+            comm_port.Disable()
+            wavemeter_button.Disable()
             important["Wavenumber"] = self.getlambda(self.DevHandle)
             self.power = self.getpower(self.DevHandle)
             print "Wavenumber: ", important["Wavenumber"]
@@ -389,7 +393,9 @@ class wavemeter_thread(threading.Thread):                       # Creating threa
         else:
             print "Failed to connect to device"                         # Print warning if connection fails
             operations["wave_connected"] = False
-            
+            comm_port.Enable()
+            wavemeter_button.Enable()
+
         while operations["wave_connected"] == True:                     # Initiate loop for grabbing data
             time.sleep(0.1)
             try:
@@ -412,6 +418,8 @@ class wavemeter_thread(threading.Thread):                       # Creating threa
                     mon_gc = wxplot.PlotGraphics([monitor_line],"Monitor","Entry",wm_mon_info[monitor][0])
                     mon_canvas.Draw(mon_gc,yAxis=(min(monitor_data[-useful["view_length"]:]),max(monitor_data[-useful["view_length"]:])))
         print "Closing Wavemeter Device"
+        comm_port.Enable()
+        wavemeter_button.Enable()
         self.DevHandle = self.closedevice(self.CommPort)                # Close connection with device
 
 class streaming_thread(threading.Thread):                       # Creating threading class for streaming program
@@ -595,6 +603,12 @@ class laser_lock_wx(wx.Frame):                                  # Create Class f
         else:
             operations["go"] = True                             # If not then set go to true
             main_label.SetLabel("Starting Locking Program")     # Update GUI
+            self.reset_button.Disable()
+            self.start_button.Disable()
+            self.stop_button.Enable()
+            rampfeed.Enable()
+            feedback.Enable()
+            integral.Enable()
             thread1 = lock_thread()                             # Create thread
             thread1.start()                                     # Start thread
 
@@ -605,6 +619,8 @@ class laser_lock_wx(wx.Frame):                                  # Create Class f
             operations["wave_connected"] = True
             main_label.SetLabel("Starting Wavemeter Program" )
             self.wave_label.SetLabel("Connected")
+            comm_port.Disable()
+            wavemeter_button.Disable()
             thread2 = wavemeter_thread()                
             thread2.start()  
 
@@ -615,6 +631,7 @@ class laser_lock_wx(wx.Frame):                                  # Create Class f
             operations["streaming"] = True
             main_label.SetLabel("Starting Streaming Program" )
             self.stream_status.SetLabel("Streaming")
+            self.stream_button.Disable()
             thread3 = streaming_thread()
             thread3.start()
 
@@ -624,6 +641,7 @@ class laser_lock_wx(wx.Frame):                                  # Create Class f
         else:
             operations["logging"] = True
             main_label.SetLabel("Logging Data")
+            self.logging_button.Disable()
             thread4 = logging_thread()                    
             thread4.start()       
 
@@ -638,6 +656,12 @@ class laser_lock_wx(wx.Frame):                                  # Create Class f
             important["Ki"] = 0.0
             main_label.SetLabel("Stopped!")
             second_label.SetLabel("Stopped!")
+            self.reset_button.Enable()
+            self.start_button.Enable()
+            self.stop_button.Disable()
+            feedback.Disable()
+            integral.Disable()
+            rampfeed.Disable()
 
     def quit_program(self,event):                               # Function to quit whole program safely
         print "Closing all connections, will quit in 5 seconds!"
@@ -662,6 +686,16 @@ class laser_lock_wx(wx.Frame):                                  # Create Class f
         for i in xrange(len(devices)):
             print i, devices[i]
         operations["displayed"] = True
+        if operations["connected"] == False:  
+            self.connect_button.Enable()
+            self.scope_num.Enable()
+            self.pd_channel.Enable()
+        if operations["agilent_grab"] == False:
+            self.agilent_start_button.Enable()
+            self.agilent_num.Enable()
+            channel1_num.Enable()
+            channel2_num.Enable()
+            
 
     def connect_scope(self,event):                              # Function to connect scope
         global rigol,rm,devices
@@ -682,6 +716,16 @@ class laser_lock_wx(wx.Frame):                                  # Create Class f
                 main_label.SetLabel("Connected")
                 operations["connected"] = True
                 operations["grabbing"] = True
+                self.connect_button.Disable()
+                self.scope_num.Disable()
+                self.reset_button.Enable()
+                self.start_button.Enable()
+                self.stop_button.Disable()
+                self.pd_channel.Disable()
+                rampoff.Enable()
+                excludeentry.Enable()
+                dcoff.Enable()
+                setpoint.Enable()
                 thread5 = grabbing_thread()                                                 # Create thread to grab and plot scope data
                 thread5.start()                                                             # Start thread
             except:
@@ -805,6 +849,11 @@ class laser_lock_wx(wx.Frame):                                  # Create Class f
                 agilent.write("TRIG:COUNT 1")               
                 print agilent.query("READ?")                                                 # Acquire first data point
                 operations["agilent_grab"] = True
+                self.agilent_start_button.Disable()
+                self.agilent_stop_button.Enable()
+                self.agilent_num.Disable()
+                channel1_num.Disable()
+                channel2_num.Disable()
                 main_label.SetLabel("Grabbing Agilent Data")
                 thread6 = agilent_thread()                                                 # Create thread to grab and plot scope data
                 thread6.start()  
@@ -816,6 +865,11 @@ class laser_lock_wx(wx.Frame):                                  # Create Class f
         if operations["agilent_grab"] == True:
             operations["agilent_grab"] = False
             main_label.SetLabel("Stopping Agilent Data")
+            self.agilent_start_button.Enable()
+            self.agilent_stop_button.Disable()
+            self.agilent_num.Enable()
+            channel1_num.Enable()
+            channel2_num.Enable()
 
     ####### Functions for changing variables with widgets
 
@@ -965,34 +1019,48 @@ class laser_lock_wx(wx.Frame):                                  # Create Class f
         self.scope_label = self.create_label(id,self.scopeSizer,'   Scope Not Connected   ',wx.RED,wx.BLACK,1,0,1,2,12)
         self.device_label = self.create_label(id,self.scopeSizer,'Scope Device Num:',wx.NullColour,wx.BLACK,2,0,1,1,10)
         self.scope_num = self.create_spinctrl(id,self.scopeSizer,'0',2,1,1,1,None,1,0,10)
+        self.scope_num.Disable()
         self.connect_button = self.create_button(id,self.scopeSizer,'  Connect Scope  ',3,0,1,1,12,self.connect_scope)
+        self.connect_button.Disable()
         self.reset_button = self.create_button(id,self.scopeSizer,'  Reset Scope  ',3,1,1,1,10,self.reset_scope)
+        self.reset_button.Disable()
         self.agilent_label = self.create_label(id,self.scopeSizer,'Agilent Device Num:',wx.NullColour,wx.BLACK,4,0,1,1,10)
         self.agilent_num = self.create_spinctrl(id,self.scopeSizer,'3',4,1,1,1,None,1,0,10)
         self.channel1_label = self.create_label(id,self.scopeSizer,'Agilent_1 Channel Num:',wx.NullColour,wx.BLACK,5,0,1,1,10)
         channel1_num = self.create_spinctrl(id,self.scopeSizer,'205',5,1,1,1,None,1,0,1000)
         self.channel2_label = self.create_label(id,self.scopeSizer,'Agilent_2 Channel Num:',wx.NullColour,wx.BLACK,6,0,1,1,10)
         channel2_num = self.create_spinctrl(id,self.scopeSizer,'206',6,1,1,1,None,1,0,1000)
+        self.agilent_num.Disable()
+        channel1_num.Disable()
+        channel2_num.Disable()
         self.agilent_start_button = self.create_button(id,self.scopeSizer,'Start Agilent Grab',7,0,1,1,10,self.start_agilent_grab)
         self.agilent_stop_button = self.create_button(id,self.scopeSizer,'Stop Agilent Grab',7,1,1,1,10,self.stop_agilent_grab)
+        self.agilent_start_button.Disable()
+        self.agilent_stop_button.Disable()
         self.scopeBoxSizer.Add(self.scopeSizer,0,wx.CENTER)
 
         # Fill Settings Sizer
         global rampoff, rampfeed, excludeentry, feedback, currentfeedback, integral, currentintegral
         self.pd_label = self.create_label(id,self.settingsSizer,'Scope PD Channel:',wx.NullColour,wx.BLACK,0,0,1,1,10)
         self.pd_channel = self.create_spinctrl(id,self.settingsSizer,str(3),0,1,1,1,None,1,1,4)
+        self.pd_channel.Disable()
         self.ramplabel = self.create_label(id,self.settingsSizer,'Ramp Offset:',wx.NullColour,wx.BLACK,1,0,1,1,10)
         rampoff = self.create_spinctrl(id,self.settingsSizer,str(important["Ramp Offset"]),1,1,1,1,self.move_ramp,0.01,-2,2)
+        rampoff.Disable()
         self.rampfeed_label = self.create_label(id,self.settingsSizer,'Ramp Feedback:',wx.NullColour,wx.BLACK,2,0,1,1,10)
         rampfeed = self.create_spinctrl(id,self.settingsSizer,str(important["Ramp Kp"]),2,1,1,1,self.change_rampfeed,0.001,0,0.5)
+        rampfeed.Disable()
         self.excludelabel = self.create_label(id,self.settingsSizer,'Exclusion Level:',wx.NullColour,wx.BLACK,3,0,1,1,10)
         excludeentry = self.create_spinctrl(id,self.settingsSizer,str(useful["background"]),3,1,1,1,self.change_background,0.01,-50,0)
+        excludeentry.Disable()
         self.feedbacklabel = self.create_label(id,self.settingsSizer,'Kp Set:',wx.NullColour,wx.BLACK,4,0,1,1,10)
         feedback = self.create_spinctrl(id,self.settingsSizer,str(useful["Kpset"]),4,1,1,1,self.change_feedback,0.1,0,2)
         self.feedbackcurrentlabel = self.create_label(id,self.settingsSizer,'Current Kp:',wx.NullColour,wx.BLACK,5,0,1,1,10)
         currentfeedback = self.create_label(id,self.settingsSizer,str(important["Kp"]),wx.NullColour,wx.BLACK,5,1,1,1,10)
         self.integral_label = self.create_label(id,self.settingsSizer,'Ki Set:',wx.NullColour,wx.BLACK,6,0,1,1,10)
         integral = self.create_spinctrl(id,self.settingsSizer,str(useful["Kiset"]),6,1,1,1,self.change_integral,0.1,0,1)
+        feedback.Disable()
+        integral.Disable()
         self.currentintegral_label = self.create_label(id,self.settingsSizer,'Current Ki:',wx.NullColour,wx.BLACK,7,0,1,1,10)
         currentintegral = self.create_label(id,self.settingsSizer,str(important["Ki"]),wx.NullColour,wx.BLACK,7,1,1,1,10)      
         self.settingsBoxSizer.Add(self.settingsSizer,0,wx.CENTER)
@@ -1010,9 +1078,11 @@ class laser_lock_wx(wx.Frame):                                  # Create Class f
         henerfit = self.create_label(id,self.lockSizer,'Not Yet',wx.YELLOW,wx.BLACK,2,4,1,2,12)
 
         self.dclabel = self.create_label(id,self.lockSizer,'V Out:',wx.NullColour,wx.BLACK,4,0,1,1,10)
-        dcoff = self.create_spinctrl(id,self.lockSizer,str(important["V Out"]),4,1,1,1,self.move_tisa,0.01,-2,2)
+        dcoff = self.create_spinctrl(id,self.lockSizer,str(important["V Out"]),4,1,1,1,self.move_tisa,0.01,-3,3)
         self.setpointlabel = self.create_label(id,self.lockSizer,'Set Point:',wx.NullColour,wx.BLACK,4,2,1,1,10)
         setpoint = self.create_spinctrl(id,self.lockSizer,str(useful["lockpos"]),4,3,1,1,self.change_setpoint,0.01,-0.9,0.9)
+        dcoff.Disable()
+        setpoint.Disable()
         self.diff_label = self.create_label(id,self.lockSizer,'Lock Diff:',wx.NullColour,wx.BLACK,4,4,1,1,10)
         laser_diff = self.create_label(id,self.lockSizer,str(important["Lock Difference"]),wx.NullColour,wx.BLACK,4,5,1,1,10)
         self.lockBoxSizer.Add(self.lockSizer,0,wx.CENTER)
@@ -1022,12 +1092,15 @@ class laser_lock_wx(wx.Frame):                                  # Create Class f
         self.Bind(wx.EVT_BUTTON,self.start_lock,self.start_button)
         self.stop_button = wx.Button(panel,id,label='STOP LOCK')
         self.Bind(wx.EVT_BUTTON,self.stop_lock,self.stop_button)
+        self.start_button.Disable()
+        self.stop_button.Disable()
         self.controlSizer.AddMany([(self.start_button,0,wx.EXPAND),(self.stop_button,0,wx.EXPAND)])
 
         # Fill Wavemeter Sizer
-        global wn_label, power_label, comm_port
-        self.wavemeter_button = wx.Button(panel,id,label='Connect Wavemeter')
-        self.Bind(wx.EVT_BUTTON,self.start_wavemeter,self.wavemeter_button)
+        global wn_label, power_label, wavemeter_button, comm_port
+        wavemeter_button = wx.Button(panel,id,label='Connect Wavemeter')
+        wavemeter_button.Enable()
+        self.Bind(wx.EVT_BUTTON,self.start_wavemeter,wavemeter_button)
         font = wx.Font(20,wx.DECORATIVE,wx.NORMAL,wx.NORMAL)
         wn_label = wx.StaticText(panel,id,label='Wave Number:')
         wn_label.SetFont(font)
@@ -1037,18 +1110,20 @@ class laser_lock_wx(wx.Frame):                                  # Create Class f
         comm_port = wx.SpinCtrlDouble(panel,id,value=str(5),size=(60,20))
         comm_port.SetRange(0,10)
         comm_port.SetIncrement(1)
+        comm_port.Enable()
         self.miniwavesizer.Add(comm_port,0,wx.LEFT,5)
         self.wave_label = wx.StaticText(panel,id,label='Not Connected')
         self.miniwavesizer.Add(self.wave_label,0,wx.LEFT,5)
         power_label = wx.StaticText(panel,id,label='Power:')
         power_label.SetFont(font)
-        self.waveSizer.AddMany([(self.wavemeter_button,0,wx.ALIGN_CENTER|wx.EXPAND),(wn_label,0,wx.ALIGN_CENTER),
+        self.waveSizer.AddMany([(wavemeter_button,0,wx.ALIGN_CENTER|wx.EXPAND),(wn_label,0,wx.ALIGN_CENTER),
                                 (self.miniwavesizer,0,wx.ALIGN_CENTER),(power_label,0,wx.ALIGN_CENTER)])
 
         # Fill Log Sizer
         global log_status, log_label
         self.logging_button = wx.Button(panel,id,label="Log Data")
         self.Bind(wx.EVT_BUTTON,self.start_logging,self.logging_button)
+        self.logging_button.Enable()
         log_status = wx.StaticText(panel,id,label='Not Logging')
         log_label = wx.StaticText(panel,id,label='Not Logging')
         self.logSizer.AddMany([(self.logging_button,0,wx.ALIGN_CENTER|wx.EXPAND),(log_status,0,wx.LEFT|wx.ALIGN_LEFT|wx.ALIGN_CENTER_VERTICAL,10),
@@ -1058,6 +1133,7 @@ class laser_lock_wx(wx.Frame):                                  # Create Class f
         global stream_label
         self.stream_button = wx.Button(panel,id,label="Stream to Web")
         self.Bind(wx.EVT_BUTTON,self.start_stream,self.stream_button)
+        self.stream_button.Enable()
         self.stream_status = wx.StaticText(panel,id,label='Not Streaming')
         stream_label = wx.StaticText(panel,id,label='Not Streaming')
         self.streamSizer.AddMany([(self.stream_button,0,wx.ALIGN_CENTER|wx.EXPAND),(self.stream_status,0,wx.LEFT|wx.ALIGN_LEFT|wx.ALIGN_CENTER_VERTICAL,10),
